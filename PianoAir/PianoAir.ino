@@ -2,7 +2,6 @@
  * PianoAir - Air Piano with Ultrasonic Sensor
  *
  * Features:
- * - Guided mode: Follow along with pre-programmed songs
  * - Free play mode: Play any notes freely
  * - Recording: Record your performances to 4 slots
  * - Multi-track playback: Play back recordings individually or merged
@@ -16,7 +15,6 @@
 #include "config.h"
 #include "note_mapping.h"
 #include "utils.h"
-#include "songs.h"
 #include "recording.h"
 #include "playback.h"
 #include "ui.h"
@@ -112,10 +110,6 @@ void loop() {
             handleFreePlayNote(note_index);
             break;
 
-          case MODE_GUIDED:
-            handleGuidedNote(note_index);
-            break;
-
           case MODE_RECORDING:
             handleRecordingNote(note_index);
             break;
@@ -127,14 +121,6 @@ void loop() {
     }
   }
 
-  // ---- UPDATE GUIDED MODE LED ----
-  if (current_mode == MODE_GUIDED && !isGuidedSongFinished()) {
-    int next_led = getNextGuidedLED();
-    if (next_led != -1) {
-      turnOffAllLEDs();
-      digitalWrite(next_led, HIGH);
-    }
-  }
 }
 
 // ============================================
@@ -153,40 +139,6 @@ void handleFreePlayNote(int note_index) {
   #endif
 }
 
-/**
- * Handle note in guided mode
- */
-void handleGuidedNote(int note_index) {
-  if (checkGuidedNote(note_index)) {
-    // Correct note!
-    playNoteWithDuration(note_index, NOTE_DURATION_MS);
-
-    #if ENABLE_DEBUG
-    Serial.print(F("Correct! "));
-    Serial.println(getNoteName(note_index, true));
-    #endif
-
-    // Check if song is finished
-    if (isGuidedSongFinished()) {
-      turnOffAllLEDs();
-      Serial.println(F("\n*** Song finished! Well done! ***"));
-      Serial.println(F("Pick a new song (1-4) or enter free play (0).\n"));
-      current_mode = MODE_MENU;
-    }
-  } else {
-    // Wrong note - provide feedback
-    Serial.print(F("Wrong note! Expected: "));
-    int expected_led = getNextGuidedLED();
-
-    // Find note index from LED pin
-    for (int i = 0; i < NUM_NOTES; i++) {
-      if (getNoteLED(i) == expected_led) {
-        Serial.println(getNoteName(i, true));
-        break;
-      }
-    }
-  }
-}
 
 /**
  * Handle note in recording mode

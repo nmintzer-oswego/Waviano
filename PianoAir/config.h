@@ -78,10 +78,9 @@ enum OverlapStrategy {
 
 enum SystemMode {
   MODE_MENU = 0,        // Main menu / idle
-  MODE_GUIDED = 1,      // Following pre-programmed song
-  MODE_FREE_PLAY = 2,   // Playing notes freely
-  MODE_RECORDING = 3,   // Recording in progress
-  MODE_PLAYBACK = 4     // Playing back recording(s)
+  MODE_FREE_PLAY = 1,   // Playing notes freely
+  MODE_RECORDING = 2,   // Recording in progress
+  MODE_PLAYBACK = 3     // Playing back recording(s)
 };
 
 // ============================================

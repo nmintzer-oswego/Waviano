@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include "config.h"
 #include "note_mapping.h"
-#include "songs.h"
 #include "recording.h"
 #include "playback.h"
 
@@ -14,6 +13,11 @@
 
 // Current overlap strategy for playback
 OverlapStrategy current_overlap_strategy = DEFAULT_OVERLAP_STRATEGY;
+
+// Input buffer for reading complete lines
+#define INPUT_BUFFER_SIZE 32
+char input_buffer[INPUT_BUFFER_SIZE];
+int buffer_index = 0;
 
 // ============================================
 // MENU DISPLAY FUNCTIONS
@@ -26,11 +30,6 @@ void printMainMenu() {
   Serial.println(F("\n========================================"));
   Serial.println(F("        PIANO AIR - Main Menu"));
   Serial.println(F("========================================"));
-  Serial.println(F("\nGUIDED MODE (Follow Along):"));
-  Serial.println(F("  1 - Mary Had a Little Lamb"));
-  Serial.println(F("  2 - Twinkle Twinkle Little Star"));
-  Serial.println(F("  3 - The Wheels on the Bus"));
-  Serial.println(F("  4 - Yankee Doodle"));
   Serial.println(F("\nFREE PLAY & RECORDING:"));
   Serial.println(F("  0 - Free play mode (Air Piano)"));
   Serial.println(F("  R[1-4] - Record to slot (e.g., R1, R2)"));
@@ -76,18 +75,6 @@ void printStatus() {
       Serial.print(F("/"));
       Serial.print(total);
       Serial.print(F(" events]"));
-    }
-    Serial.println();
-  } else if (getCurrentSong() != NULL) {
-    Serial.print(F("GUIDED - "));
-    Serial.print(getCurrentSong()->name);
-    int current, total;
-    if (getSongProgress(&current, &total)) {
-      Serial.print(F(" ["));
-      Serial.print(current);
-      Serial.print(F("/"));
-      Serial.print(total);
-      Serial.print(F("]"));
     }
     Serial.println();
   } else {
@@ -157,50 +144,42 @@ void printOverlapStrategy(OverlapStrategy strategy) {
 
 /**
  * Parse and handle serial input commands
- * @param input Input character or command
+ * @param cmd Input command string
  * @return System mode after command execution
  */
-SystemMode handleSerialCommand(char input) {
-  // Convert to uppercase for easier parsing
+SystemMode handleSerialCommand(char* cmd) {
+  // Skip empty commands
+  if (cmd[0] == '\0') {
+    return current_mode;
+  }
+
+  // Convert first character to uppercase for easier parsing
+  char input = cmd[0];
   if (input >= 'a' && input <= 'z') {
     input = input - 32;
   }
 
-  // ---- GUIDED MODE SONG SELECTION ----
-  if (input >= '1' && input <= '4') {
-    int song_index = input - '1';
-    if (selectSong(song_index)) {
-      Serial.print(F("\nNow playing: "));
-      Serial.println(getCurrentSong()->name);
-      Serial.println(F("Follow the LED and play the notes!\n"));
-      return MODE_GUIDED;
-    }
-  }
-
   // ---- FREE PLAY MODE ----
-  else if (input == '0') {
-    clearSongSelection();
+  if (input == '0') {
     Serial.println(F("\nFree play mode activated!"));
     return MODE_FREE_PLAY;
   }
 
   // ---- RECORDING COMMANDS ----
   else if (input == 'R') {
-    // Check for slot number in next character
-    if (Serial.available() > 0) {
-      char slot_char = Serial.read();
-      if (slot_char >= '1' && slot_char <= '0' + NUM_RECORDING_SLOTS) {
-        int slot_num = slot_char - '1';
-        if (startRecording(slot_num)) {
-          Serial.print(F("\nRecording to Slot "));
-          Serial.print(slot_num + 1);
-          Serial.println(F("... Play some notes!"));
-          Serial.println(F("Press 'S' to stop recording.\n"));
-          return MODE_RECORDING;
-        }
+    // Check for slot number in second character
+    if (cmd[1] >= '1' && cmd[1] <= '0' + NUM_RECORDING_SLOTS) {
+      int slot_num = cmd[1] - '1';
+      if (startRecording(slot_num)) {
+        Serial.print(F("\nRecording to Slot "));
+        Serial.print(slot_num + 1);
+        Serial.println(F("... Play some notes!"));
+        Serial.println(F("Press 'S' to stop recording.\n"));
+        return MODE_RECORDING;
       }
+    } else {
+      Serial.println(F("\nUsage: R[1-4] (e.g., R1, R2, R3, R4)"));
     }
-    Serial.println(F("\nUsage: R[1-4] (e.g., R1, R2, R3, R4)"));
   }
 
   else if (input == 'S') {
@@ -223,33 +202,31 @@ SystemMode handleSerialCommand(char input) {
 
   // ---- PLAYBACK COMMANDS ----
   else if (input == 'P') {
-    if (Serial.available() > 0) {
-      char slot_char = Serial.read();
+    char slot_char = cmd[1];
 
-      // Play all slots
-      if (slot_char == 'A' || slot_char == 'a') {
-        if (playAllSlots(current_overlap_strategy)) {
-          Serial.print(F("\nPlaying all slots ("));
-          printOverlapStrategy(current_overlap_strategy);
-          Serial.println(F(" mode)..."));
-          return MODE_PLAYBACK;
-        } else {
-          Serial.println(F("\nNo recordings to play."));
-        }
+    // Play all slots
+    if (slot_char == 'A' || slot_char == 'a') {
+      if (playAllSlots(current_overlap_strategy)) {
+        Serial.print(F("\nPlaying all slots ("));
+        printOverlapStrategy(current_overlap_strategy);
+        Serial.println(F(" mode)..."));
+        return MODE_PLAYBACK;
+      } else {
+        Serial.println(F("\nNo recordings to play."));
       }
-      // Play specific slot
-      else if (slot_char >= '1' && slot_char <= '0' + NUM_RECORDING_SLOTS) {
-        int slot_num = slot_char - '1';
-        if (playSingleSlot(slot_num)) {
-          Serial.print(F("\nPlaying Slot "));
-          Serial.print(slot_num + 1);
-          Serial.println(F("..."));
-          return MODE_PLAYBACK;
-        } else {
-          Serial.print(F("\nSlot "));
-          Serial.print(slot_num + 1);
-          Serial.println(F(" is empty."));
-        }
+    }
+    // Play specific slot
+    else if (slot_char >= '1' && slot_char <= '0' + NUM_RECORDING_SLOTS) {
+      int slot_num = slot_char - '1';
+      if (playSingleSlot(slot_num)) {
+        Serial.print(F("\nPlaying Slot "));
+        Serial.print(slot_num + 1);
+        Serial.println(F("..."));
+        return MODE_PLAYBACK;
+      } else {
+        Serial.print(F("\nSlot "));
+        Serial.print(slot_num + 1);
+        Serial.println(F(" is empty."));
       }
     } else {
       Serial.println(F("\nUsage: P[1-4] or PA (e.g., P1, P2, PA)"));
@@ -268,22 +245,20 @@ SystemMode handleSerialCommand(char input) {
   }
 
   else if (input == 'C') {
-    if (Serial.available() > 0) {
-      char slot_char = Serial.read();
+    char slot_char = cmd[1];
 
-      // Clear all slots
-      if (slot_char == 'A' || slot_char == 'a') {
-        clearAllRecordings();
-        Serial.println(F("\nAll recordings cleared."));
-      }
-      // Clear specific slot
-      else if (slot_char >= '1' && slot_char <= '0' + NUM_RECORDING_SLOTS) {
-        int slot_num = slot_char - '1';
-        if (clearRecordingSlot(slot_num)) {
-          Serial.print(F("\nSlot "));
-          Serial.print(slot_num + 1);
-          Serial.println(F(" cleared."));
-        }
+    // Clear all slots
+    if (slot_char == 'A' || slot_char == 'a') {
+      clearAllRecordings();
+      Serial.println(F("\nAll recordings cleared."));
+    }
+    // Clear specific slot
+    else if (slot_char >= '1' && slot_char <= '0' + NUM_RECORDING_SLOTS) {
+      int slot_num = slot_char - '1';
+      if (clearRecordingSlot(slot_num)) {
+        Serial.print(F("\nSlot "));
+        Serial.print(slot_num + 1);
+        Serial.println(F(" cleared."));
       }
     } else {
       Serial.println(F("\nUsage: C[1-4] or CA (e.g., C1, C2, CA)"));
@@ -292,17 +267,15 @@ SystemMode handleSerialCommand(char input) {
 
   // ---- OVERLAP MODE SELECTION ----
   else if (input == 'M') {
-    if (Serial.available() > 0) {
-      char mode_char = Serial.read();
+    char mode_char = cmd[1];
 
-      if (mode_char >= '1' && mode_char <= '4') {
-        current_overlap_strategy = (OverlapStrategy)(mode_char - '1');
-        Serial.print(F("\nOverlap mode set to: "));
-        printOverlapStrategy(current_overlap_strategy);
-        Serial.println();
-      } else {
-        Serial.println(F("\nUsage: M[1-4] (M1=High, M2=Low, M3=Alternate, M4=Drop)"));
-      }
+    if (mode_char >= '1' && mode_char <= '4') {
+      current_overlap_strategy = (OverlapStrategy)(mode_char - '1');
+      Serial.print(F("\nOverlap mode set to: "));
+      printOverlapStrategy(current_overlap_strategy);
+      Serial.println();
+    } else {
+      Serial.println(F("\nUsage: M[1-4] (M1=High, M2=Low, M3=Alternate, M4=Drop)"));
     }
   }
 
@@ -315,19 +288,39 @@ SystemMode handleSerialCommand(char input) {
 }
 
 /**
- * Check and process serial input
+ * Check and process serial input (reads complete lines)
  * @return Updated system mode
  */
 SystemMode processSerialInput() {
-  if (Serial.available() > 0) {
-    char input = Serial.read();
+  while (Serial.available() > 0) {
+    char c = Serial.read();
 
-    // Ignore newlines and carriage returns
-    if (input == '\n' || input == '\r') {
-      return current_mode;
+    // Check for line ending
+    if (c == '\n' || c == '\r') {
+      if (buffer_index > 0) {
+        // Null-terminate the string
+        input_buffer[buffer_index] = '\0';
+
+        // Process the command
+        SystemMode new_mode = handleSerialCommand(input_buffer);
+
+        // Reset buffer for next command
+        buffer_index = 0;
+
+        return new_mode;
+      }
+      // Empty line, ignore
+      continue;
     }
 
-    return handleSerialCommand(input);
+    // Add character to buffer (if there's space)
+    if (buffer_index < INPUT_BUFFER_SIZE - 1) {
+      input_buffer[buffer_index++] = c;
+    } else {
+      // Buffer overflow - reset and warn
+      Serial.println(F("\nError: Command too long!"));
+      buffer_index = 0;
+    }
   }
 
   return current_mode;
